@@ -1,9 +1,3 @@
-/**
- * LandingCanvas: Canvas renderer for the ProxiSpeak landing-page mini office.
- * Draws the interactive proximity demo (floor, desks, hearing halo, avatars).
- * Separate from OfficeWorld.js (live office map) and AvatarRenderer.js (full office avatars).
- */
-
 export class LandingCanvas {
   render(ctx, {
     width,
