@@ -4,11 +4,11 @@ import UserLocation from '../models/UserLocation.js';
 export class SignalingManager {
   constructor(io) {
     this.io = io;
-    // Map socket.id -> userId
+    
     this.socketToUserMap = new Map();
-    // Map userId -> socket.id
+  
     this.userToSocketMap = new Map();
-    // Map userId -> Set of peerUserIds currently in earshot (< 100px)
+   
     this.earshotMap = new Map();
   }
 
@@ -29,7 +29,6 @@ export class SignalingManager {
     const peersInEarshot = this.earshotMap.get(userId) || new Set();
     this.earshotMap.delete(userId);
 
-    // Notify any peers that were in earshot that this user left
     peersInEarshot.forEach((peerId) => {
       const peerSocketId = this.userToSocketMap.get(peerId);
       if (peerSocketId) {
@@ -60,9 +59,6 @@ export class SignalingManager {
     return user1Set ? user1Set.has(userId2) : false;
   }
 
-  /**
-   * Handle user movement and compute proximity differential
-   */
   async handleUserMovement(userId, coordinates, facingAngle = 0, isSpeaking = false) {
     const socketId = this.userToSocketMap.get(userId);
     if (!socketId) return null;
