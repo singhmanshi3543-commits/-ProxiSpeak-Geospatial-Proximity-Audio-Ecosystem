@@ -4,11 +4,8 @@ import UserLocation from '../models/UserLocation.js';
 export class SignalingManager {
   constructor(io) {
     this.io = io;
-    
     this.socketToUserMap = new Map();
-  
     this.userToSocketMap = new Map();
-   
     this.earshotMap = new Map();
   }
 
@@ -45,15 +42,12 @@ export class SignalingManager {
 
     return userId;
   }
-
   getSocketId(userId) {
     return this.userToSocketMap.get(userId);
   }
-
   getUserId(socketId) {
     return this.socketToUserMap.get(socketId);
   }
-
   isPeerInEarshot(userId1, userId2) {
     const user1Set = this.earshotMap.get(userId1);
     return user1Set ? user1Set.has(userId2) : false;
@@ -170,9 +164,6 @@ export class SignalingManager {
     };
   }
 
-  /**
-   * Relay WebRTC Offer to target peer (only allowed if peers are in earshot)
-   */
   handleWebRTCOffer(fromUserId, { targetUserId, sdp }) {
     const targetSocketId = this.userToSocketMap.get(targetUserId);
     if (!targetSocketId) {
@@ -192,9 +183,6 @@ export class SignalingManager {
     });
   }
 
-  /**
-   * Relay WebRTC Answer to target peer
-   */
   handleWebRTCAnswer(fromUserId, { targetUserId, sdp }) {
     const targetSocketId = this.userToSocketMap.get(targetUserId);
     if (!targetSocketId) return;
@@ -205,9 +193,6 @@ export class SignalingManager {
     });
   }
 
-  /**
-   * Relay ICE Candidate to target peer
-   */
   handleIceCandidate(fromUserId, { targetUserId, candidate }) {
     const targetSocketId = this.userToSocketMap.get(targetUserId);
     if (!targetSocketId) return;
