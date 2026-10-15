@@ -1,12 +1,36 @@
 /**
- * AvatarRenderer: 2D Canvas rendering engine for local and remote avatars
- * Provides interpolated positioning, directional visors, earshot halos,
- * voice ripple effects, identity plaques, and status badges.
+ * AvatarRenderer: 2D Canvas rendering engine for local and remote avatars.
+ * Handles interpolated motion, directional visors, earshot halos,
+ * voice ripples, identity plaques, and status badges.
  */
 
 export class AvatarRenderer {
   /**
-   * Draws the conversational earshot proximity halo around the local avatar
+   * Safe rounded rectangle helper with fallback for environments lacking ctx.roundRect.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} x
+   * @param {number} y
+   * @param {number} width
+   * @param {number} height
+   * @param {number} radius
+   */
+  static drawRoundRect(ctx, x, y, width, height, radius) {
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x, y, width, height, radius);
+      return;
+    }
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.arcTo(x + width, y, x + width, y + height, r);
+    ctx.arcTo(x + width, y + height, x, y + height, r);
+    ctx.arcTo(x, y + height, x, y, r);
+    ctx.arcTo(x, y, x + width, y, r);
+    ctx.closePath();
+  }
+
+  /**
+   * Draws the conversational earshot proximity halo around the local avatar.
    * @param {CanvasRenderingContext2D} ctx
    * @param {number} x
    * @param {number} y
@@ -18,8 +42,9 @@ export class AvatarRenderer {
 
     ctx.save();
 
+    const radius = Math.max(10, Number(earshotRadius) || 100);
     const pulseDelta = Math.sin(pulseTime * 0.003) * 3;
-    const currentRadius = Math.max(10, earshotRadius + pulseDelta);
+    const currentRadius = Math.max(10, radius + pulseDelta);
 
     const grad = ctx.createRadialGradient(x, y, 10, x, y, currentRadius);
     grad.addColorStop(0, 'rgba(56, 189, 248, 0.2)');
@@ -43,13 +68,13 @@ export class AvatarRenderer {
     ctx.fillStyle = 'rgba(56, 189, 248, 0.95)';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('🎧 100px Earshot Threshold', x, y - currentRadius - 6);
+    ctx.fillText(`🎧 ${Math.round(radius)}px Earshot Threshold`, x, y - currentRadius - 6);
 
     ctx.restore();
   }
 
   /**
-   * Draws a floor spotlight and floating beacon above the local player
+   * Draws a floor spotlight and floating beacon above the local player.
    * @param {CanvasRenderingContext2D} ctx
    * @param {number} x
    * @param {number} y
@@ -89,7 +114,7 @@ export class AvatarRenderer {
 
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.roundRect(pillX, pillY, pillWidth, pillHeight, 12);
+    this.drawRoundRect(ctx, pillX, pillY, pillWidth, pillHeight, 12);
     ctx.fill();
 
     ctx.strokeStyle = '#ffffff';
@@ -116,7 +141,7 @@ export class AvatarRenderer {
   }
 
   /**
-   * Draws dynamic acoustic ripple rings when an avatar is speaking
+   * Draws dynamic acoustic ripple rings when an avatar is speaking.
    * @param {CanvasRenderingContext2D} ctx
    * @param {number} x
    * @param {number} y
@@ -128,7 +153,7 @@ export class AvatarRenderer {
     ctx.save();
     const waveCount = 3;
     for (let i = 0; i < waveCount; i++) {
-      const progress = (time * 0.002 + i * (1 / waveCount)) % 1;
+      const progress = ((time * 0.002 + i / waveCount) % 1 + 1) % 1;
       const radius = 22 + progress * 42;
       const alpha = (1 - progress) * 0.85;
 
@@ -142,7 +167,7 @@ export class AvatarRenderer {
   }
 
   /**
-   * Renders a local or remote user avatar with visual cues and status indicators
+   * Renders a local or remote user avatar with visual cues and status indicators.
    * @param {CanvasRenderingContext2D} ctx
    * @param {Object} avatar
    * @param {boolean} [isLocal=false]
@@ -162,7 +187,9 @@ export class AvatarRenderer {
     const role = typeof avatar.role === 'string' && avatar.role.trim()
       ? avatar.role.trim()
       : 'Engineer';
-    const avatarColor = avatar.avatarColor || '#3b82f6';
+    const avatarColor = typeof avatar.avatarColor === 'string' && avatar.avatarColor.trim()
+      ? avatar.avatarColor.trim()
+      : '#3b82f6';
     const facingAngle = Number.isFinite(avatar.facingAngle) ? avatar.facingAngle : 0;
     const isSpeaking = Boolean(avatar.isSpeaking);
     const isMuted = Boolean(avatar.isMuted);
@@ -252,7 +279,7 @@ export class AvatarRenderer {
 
     ctx.fillStyle = isLocal ? 'rgba(15, 23, 42, 0.95)' : 'rgba(15, 23, 42, 0.85)';
     ctx.beginPath();
-    ctx.roundRect(x - textWidth / 2 - 10, tagY, textWidth + 20, tagHeight, 6);
+    this.drawRoundRect(ctx, x - textWidth / 2 - 10, tagY, textWidth + 20, tagHeight, 6);
     ctx.fill();
 
     ctx.strokeStyle = isLocal ? '#f59e0b' : 'rgba(255, 255, 255, 0.12)';
@@ -278,7 +305,7 @@ export class AvatarRenderer {
     } else if (isBot) {
       ctx.fillStyle = 'rgba(139, 92, 246, 0.9)';
       ctx.beginPath();
-      ctx.roundRect(x - 14, y - avatarRadius - 12, 28, 12, 3);
+      this.drawRoundRect(ctx, x - 14, y - avatarRadius - 12, 28, 12, 3);
       ctx.fill();
       ctx.font = 'bold 7px "Outfit", sans-serif';
       ctx.fillStyle = '#ffffff';
