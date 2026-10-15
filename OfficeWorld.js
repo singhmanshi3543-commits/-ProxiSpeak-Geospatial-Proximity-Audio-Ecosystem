@@ -1,5 +1,5 @@
 /**
- * OfficeWorld: 2D Canvas Virtual Environment Renderer
+ * OfficeWorld: 2D Canvas Virtual Environment Renderer.
  * Renders architectural floor grids, office zones, acoustic walls,
  * furniture obstacles, decorative elements, and navigation waypoints.
  */
@@ -92,7 +92,31 @@ export const DEFAULT_OFFICE_LAYOUT = {
 
 export class OfficeWorld {
   /**
-   * Creates an OfficeWorld renderer with room data or fallback layout definitions
+   * Safe rounded rectangle helper with fallback for environments lacking ctx.roundRect.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} x
+   * @param {number} y
+   * @param {number} width
+   * @param {number} height
+   * @param {number} radius
+   */
+  static drawRoundRect(ctx, x, y, width, height, radius) {
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x, y, width, height, radius);
+      return;
+    }
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.arcTo(x + width, y, x + width, y + height, r);
+    ctx.arcTo(x + width, y + height, x, y + height, r);
+    ctx.arcTo(x, y + height, x, y, r);
+    ctx.arcTo(x, y, x + width, y, r);
+    ctx.closePath();
+  }
+
+  /**
+   * Creates an OfficeWorld renderer with room data or fallback layout definitions.
    * @param {Object} [roomData]
    */
   constructor(roomData) {
@@ -100,17 +124,27 @@ export class OfficeWorld {
   }
 
   /**
-   * Updates the active room data layout
-   * @param {Object} roomData
+   * Updates the active room data layout safely merging overrides with default layout fallback.
+   * @param {Object} [roomData]
    */
   setRoomData(roomData) {
     if (roomData && typeof roomData === 'object') {
       this.roomData = {
-        dimensions: roomData.dimensions || DEFAULT_OFFICE_LAYOUT.dimensions,
-        zones: Array.isArray(roomData.zones) && roomData.zones.length > 0 ? roomData.zones : DEFAULT_OFFICE_LAYOUT.zones,
-        walls: Array.isArray(roomData.walls) && roomData.walls.length > 0 ? roomData.walls : DEFAULT_OFFICE_LAYOUT.walls,
-        furniture: Array.isArray(roomData.furniture) && roomData.furniture.length > 0 ? roomData.furniture : DEFAULT_OFFICE_LAYOUT.furniture,
+        ...DEFAULT_OFFICE_LAYOUT,
         ...roomData,
+        dimensions: {
+          width: Number(roomData.dimensions?.width) || DEFAULT_OFFICE_LAYOUT.dimensions.width,
+          height: Number(roomData.dimensions?.height) || DEFAULT_OFFICE_LAYOUT.dimensions.height,
+        },
+        zones: Array.isArray(roomData.zones) && roomData.zones.length > 0
+          ? roomData.zones
+          : DEFAULT_OFFICE_LAYOUT.zones,
+        walls: Array.isArray(roomData.walls) && roomData.walls.length > 0
+          ? roomData.walls
+          : DEFAULT_OFFICE_LAYOUT.walls,
+        furniture: Array.isArray(roomData.furniture) && roomData.furniture.length > 0
+          ? roomData.furniture
+          : DEFAULT_OFFICE_LAYOUT.furniture,
       };
     } else {
       this.roomData = DEFAULT_OFFICE_LAYOUT;
@@ -118,12 +152,12 @@ export class OfficeWorld {
   }
 
   /**
-   * Renders the complete virtual office environment
+   * Renders the complete virtual office environment.
    * @param {CanvasRenderingContext2D} ctx
    * @param {number} width
    * @param {number} height
    * @param {number} [time=0]
-   * @param {{x: number, y: number}|null} [targetWaypoint=null]
+   * @param {{x: number, y: number}|[number, number]|null} [targetWaypoint=null]
    */
   render(ctx, width, height, time = 0, targetWaypoint = null) {
     if (!ctx) return;
@@ -137,20 +171,39 @@ export class OfficeWorld {
     this.renderFurniture(ctx, time);
     this.renderWalls(ctx);
 
-    if (targetWaypoint && Number.isFinite(targetWaypoint.x) && Number.isFinite(targetWaypoint.y)) {
-      this.renderWaypoint(ctx, targetWaypoint.x, targetWaypoint.y, time);
+    if (targetWaypoint) {
+      let wx = null;
+      let wy = null;
+      if (Array.isArray(targetWaypoint) && targetWaypoint.length >= 2) {
+        wx = Number(targetWaypoint[0]);
+        wy = Number(targetWaypoint[1]);
+      } else if (typeof targetWaypoint === 'object') {
+        if (Array.isArray(targetWaypoint.coordinates) && targetWaypoint.coordinates.length >= 2) {
+          wx = Number(targetWaypoint.coordinates[0]);
+          wy = Number(targetWaypoint.coordinates[1]);
+        } else {
+          wx = Number(targetWaypoint.x);
+          wy = Number(targetWaypoint.y);
+        }
+      }
+      if (Number.isFinite(wx) && Number.isFinite(wy)) {
+        this.renderWaypoint(ctx, wx, wy, time);
+      }
     }
   }
 
   /**
-   * Renders the building perimeter structural shell and entrance doorway
+   * Renders the building perimeter structural shell and entrance doorway.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} width
+   * @param {number} height
    */
   renderBuildingShell(ctx, width, height) {
     ctx.save();
 
     ctx.fillStyle = '#0b1120';
     ctx.beginPath();
-    ctx.roundRect(30, 30, width - 60, height - 60, 16);
+    OfficeWorld.drawRoundRect(ctx, 30, 30, width - 60, height - 60, 16);
     ctx.fill();
 
     ctx.strokeStyle = '#1e293b';
@@ -175,42 +228,48 @@ export class OfficeWorld {
   }
 
   /**
-   * Renders the architectural background grid and alignment accents
+   * Renders the architectural background grid and alignment accents in batched draw calls.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} width
+   * @param {number} height
    */
   renderFloorGrid(ctx, width, height) {
     const gridSize = 40;
     ctx.save();
+
+    // Batch all grid line paths into a single stroke call
+    ctx.beginPath();
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
     ctx.lineWidth = 1;
 
     for (let x = 0; x < width; x += gridSize) {
-      ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
-      ctx.stroke();
     }
 
     for (let y = 0; y < height; y += gridSize) {
-      ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
-      ctx.stroke();
     }
+    ctx.stroke();
 
+    // Batch all intersection accent dots into a single fill call
+    ctx.beginPath();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
     for (let x = 60; x < width; x += 120) {
       for (let y = 60; y < height; y += 120) {
-        ctx.beginPath();
+        ctx.moveTo(x + 1.5, y);
         ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-        ctx.fill();
       }
     }
+    ctx.fill();
 
     ctx.restore();
   }
 
   /**
-   * Renders designated office zones and area title plaques
+   * Renders designated office zones and area title plaques.
+   * @param {CanvasRenderingContext2D} ctx
    */
   renderZones(ctx) {
     const zones = Array.isArray(this.roomData?.zones) ? this.roomData.zones : [];
@@ -229,7 +288,7 @@ export class OfficeWorld {
 
       ctx.fillStyle = zone.color || 'rgba(59, 130, 246, 0.06)';
       ctx.beginPath();
-      ctx.roundRect(x1, y1, w, h, 12);
+      OfficeWorld.drawRoundRect(ctx, x1, y1, w, h, 12);
       ctx.fill();
 
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
@@ -241,7 +300,7 @@ export class OfficeWorld {
       const titleWidth = ctx.measureText(zoneTitle).width;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
       ctx.beginPath();
-      ctx.roundRect(x1 + 16, y1 + 14, titleWidth + 30, 24, 6);
+      OfficeWorld.drawRoundRect(ctx, x1 + 16, y1 + 14, titleWidth + 30, 24, 6);
       ctx.fill();
 
       ctx.fillStyle = '#cbd5e1';
@@ -260,7 +319,8 @@ export class OfficeWorld {
   }
 
   /**
-   * Renders acoustic partition walls with sound-damping visual indicators
+   * Renders acoustic partition walls with sound-damping visual indicators.
+   * @param {CanvasRenderingContext2D} ctx
    */
   renderWalls(ctx) {
     const walls = Array.isArray(this.roomData?.walls) ? this.roomData.walls : [];
@@ -306,7 +366,9 @@ export class OfficeWorld {
   }
 
   /**
-   * Renders office desks, watercoolers, sofas, and plants
+   * Renders office desks, watercoolers, sofas, and plants.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} [time=0]
    */
   renderFurniture(ctx, time = 0) {
     const furniture = Array.isArray(this.roomData?.furniture) ? this.roomData.furniture : [];
@@ -327,7 +389,7 @@ export class OfficeWorld {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.roundRect(x, y, width, height, 8);
+        OfficeWorld.drawRoundRect(ctx, x, y, width, height, 8);
         ctx.fill();
         ctx.stroke();
 
@@ -347,7 +409,7 @@ export class OfficeWorld {
       } else if (type === 'watercooler') {
         ctx.fillStyle = '#1e293b';
         ctx.beginPath();
-        ctx.roundRect(x, y + 10, width, height - 10, 6);
+        OfficeWorld.drawRoundRect(ctx, x, y + 10, width, height - 10, 6);
         ctx.fill();
 
         const bubbleOffset = Math.sin(time * 0.005) * 2;
@@ -366,7 +428,7 @@ export class OfficeWorld {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(x, y, width, height, 10);
+        OfficeWorld.drawRoundRect(ctx, x, y, width, height, 10);
         ctx.fill();
         ctx.stroke();
 
@@ -394,13 +456,17 @@ export class OfficeWorld {
   }
 
   /**
-   * Renders the animated destination waypoint beacon
+   * Renders the animated destination waypoint beacon.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} x
+   * @param {number} y
+   * @param {number} [time=0]
    */
   renderWaypoint(ctx, x, y, time = 0) {
     if (!ctx || !Number.isFinite(x) || !Number.isFinite(y)) return;
 
     ctx.save();
-    const progress = (time * 0.003) % 1;
+    const progress = ((time * 0.003) % 1 + 1) % 1;
     const ringRadius = 6 + progress * 20;
     const alpha = Math.max(0, 1 - progress);
 
