@@ -62,8 +62,8 @@ async function startServer() {
     // 5. Start listening
     server.listen(PORT, () => {
       console.log(`=======================================================`);
-      console.log(`🚀 ProxiSpeak Geospatial Server running on port ${PORT}`);
-      console.log(`📍 MongoDB 2D $near & $geoWithin Proximity Engine Active`);
+      console.log(` ProxiSpeak Geospatial Server running on port ${PORT}`);
+      console.log(` MongoDB 2D $near & $geoWithin Proximity Engine Active`);
       console.log(`🎙️ WebRTC Mesh Signaling restricted to 100px earshot`);
       console.log(`🏢 Infotact Digital HQ Map initialized`);
       console.log(`=======================================================`);
