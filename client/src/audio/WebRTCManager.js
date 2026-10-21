@@ -1,3 +1,4 @@
+
 import spatialMixerInstance from './SpatialAudioMixer.js';
 
 const RTC_CONFIG = {
@@ -7,317 +8,528 @@ const RTC_CONFIG = {
   ],
 };
 
+const VAD_INTERVAL_MS = 80;
+const SPEAKING_THRESHOLD = 14;
+
 export class WebRTCManager {
   constructor(socket, currentUserId) {
     this.socket = socket;
     this.currentUserId = currentUserId;
+
     this.localStream = null;
-    this.peerConnections = new Map(); // peerId -> RTCPeerConnection
+    this.peerConnections = new Map();
+    this.pendingIceCandidates = new Map();
+
     this.audioAnalyser = null;
+    this.audioSource = null;
+    this.audioData = null;
+    this.syntheticOscillator = null;
+    this.syntheticGain = null;
+
     this.isSpeaking = false;
     this.isMicMuted = false;
+    this.isDestroyed = false;
     this.vadInterval = null;
-    this.micStatus = 'requesting'; // 'active' | 'muted' | 'synthetic' | 'blocked'
-    this.currentVolume = 0; // 0..100
+    this.initPromise = null;
+
+    this.micStatus = 'requesting';
+    this.currentVolume = 0;
+
     this.volumeListeners = new Set();
     this.statusListeners = new Set();
   }
 
   onVolumeUpdate(callback) {
+    if (typeof callback !== 'function') return () => {};
+
     this.volumeListeners.add(callback);
     return () => this.volumeListeners.delete(callback);
   }
 
   onStatusUpdate(callback) {
+    if (typeof callback !== 'function') return () => {};
+
     this.statusListeners.add(callback);
     callback(this.micStatus);
+
     return () => this.statusListeners.delete(callback);
   }
 
   notifyStatus() {
-    this.statusListeners.forEach((cb) => {
-      try { cb(this.micStatus); } catch (e) {}
+    this.statusListeners.forEach((callback) => {
+      try {
+        callback(this.micStatus);
+      } catch (error) {
+        console.error('[WebRTC] Status listener failed:', error);
+      }
     });
   }
 
-  /**
-   * Request user microphone stream and initialize Voice Activity Detection (VAD)
-   */
-  async initLocalStream(useFallbackSynth = false) {
-    try {
-      if (!useFallbackSynth && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-        this.micStatus = 'active';
-        console.log('[WebRTC] Microphone stream captured successfully.');
-      } else {
-        throw new Error('Fallback synthetic stream requested');
+  notifyVolume(value) {
+    this.volumeListeners.forEach((callback) => {
+      try {
+        callback(value);
+      } catch (error) {
+        console.error('[WebRTC] Volume listener failed:', error);
       }
-    } catch (err) {
-      console.warn('[WebRTC] Microphone access not granted or unavailable. Utilizing synthetic audio track:', err.message);
-      this.micStatus = 'synthetic';
-      const ctx = spatialMixerInstance.ensureAudioContext();
-      const osc = ctx.createOscillator();
-      const dst = ctx.createMediaStreamDestination();
-      const gain = ctx.createGain();
-      gain.gain.value = 0.0001;
-      osc.connect(gain);
-      gain.connect(dst);
-      osc.start();
-      this.localStream = dst.stream;
+    });
+  }
+
+  async initLocalStream(useFallbackSynth = false) {
+    if (this.isDestroyed) {
+      throw new Error('WebRTCManager has been destroyed.');
+    }
+
+    if (this.localStream) return this.localStream;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = this._initializeLocalStream(useFallbackSynth);
+
+    try {
+      return await this.initPromise;
+    } finally {
+      this.initPromise = null;
+    }
+  }
+
+  async _initializeLocalStream(useFallbackSynth) {
+    let stream;
+
+    try {
+      if (
+        useFallbackSynth ||
+        !navigator.mediaDevices?.getUserMedia
+      ) {
+        throw new Error('Microphone unavailable or fallback requested.');
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+
+      if (this.isDestroyed) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error('WebRTCManager was destroyed during initialization.');
+      }
+
+      this.micStatus = 'active';
+      console.log('[WebRTC] Microphone stream initialized.');
+    } catch (error) {
+      if (this.isDestroyed) throw error;
+
+      console.warn(
+        '[WebRTC] Microphone unavailable. Using synthetic audio:',
+        error.message
+      );
+
+      try {
+        const audioContext = spatialMixerInstance.ensureAudioContext();
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        const destination = audioContext.createMediaStreamDestination();
+
+        gain.gain.value = 0.0001;
+        oscillator.connect(gain);
+        gain.connect(destination);
+        oscillator.start();
+
+        stream = destination.stream;
+        this.syntheticOscillator = oscillator;
+        this.syntheticGain = gain;
+        this.micStatus = 'synthetic';
+      } catch (fallbackError) {
+        this.micStatus = 'blocked';
+        this.notifyStatus();
+        throw fallbackError;
+      }
+    }
+
+    if (this.isDestroyed) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('WebRTCManager was destroyed during initialization.');
+    }
+
+    this.localStream = stream;
+
+    if (this.isMicMuted) {
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = false;
+      });
     }
 
     this.notifyStatus();
     this.setupVoiceActivityDetection();
-    return this.localStream;
+
+    return stream;
   }
 
-  /**
-   * Voice Activity Detection (VAD) & Live VU Meter
-   */
   setupVoiceActivityDetection() {
-    if (!this.localStream || this.localStream.getAudioTracks().length === 0) return;
+    this.stopVoiceActivityDetection();
+
+    if (!this.localStream?.getAudioTracks().length) return;
 
     try {
-      const audioCtx = spatialMixerInstance.ensureAudioContext();
-      const source = audioCtx.createMediaStreamSource(this.localStream);
-      this.audioAnalyser = audioCtx.createAnalyser();
+      const audioContext = spatialMixerInstance.ensureAudioContext();
+
+      this.audioSource = audioContext.createMediaStreamSource(this.localStream);
+      this.audioAnalyser = audioContext.createAnalyser();
       this.audioAnalyser.fftSize = 256;
       this.audioAnalyser.smoothingTimeConstant = 0.4;
-      source.connect(this.audioAnalyser);
+      this.audioSource.connect(this.audioAnalyser);
 
       const bufferLength = this.audioAnalyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
+      this.audioData = new Uint8Array(bufferLength);
 
       this.vadInterval = setInterval(() => {
-        if (this.isMicMuted) {
-          this.currentVolume = 0;
-          this.notifyVolume(0);
-          if (this.isSpeaking) {
-            this.isSpeaking = false;
-            this.emitSpeakingStatus(false);
-          }
+        if (this.isDestroyed || !this.audioAnalyser || !this.audioData) {
           return;
         }
 
-        this.audioAnalyser.getByteFrequencyData(dataArray);
+        if (this.isMicMuted) {
+          this.currentVolume = 0;
+          this.notifyVolume(0);
+          this.updateSpeakingStatus(false);
+          return;
+        }
+
+        this.audioAnalyser.getByteFrequencyData(this.audioData);
+
         let sum = 0;
         for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
+          sum += this.audioData[i];
         }
+
         const average = sum / bufferLength;
+        const volume = Math.min(100, Math.round((average / 128) * 100));
 
-        // Normalized volume level 0..100
-        const volumeLevel = Math.min(100, Math.round((average / 128) * 100));
-        this.currentVolume = volumeLevel;
-        this.notifyVolume(volumeLevel);
-
-        const speakingNow = volumeLevel > 14;
-        if (speakingNow !== this.isSpeaking) {
-          this.isSpeaking = speakingNow;
-          this.emitSpeakingStatus(speakingNow);
-        }
-      }, 80);
-    } catch (err) {
-      console.warn('[WebRTC] Could not initialize VAD analyser:', err);
+        this.currentVolume = volume;
+        this.notifyVolume(volume);
+        this.updateSpeakingStatus(volume > SPEAKING_THRESHOLD);
+      }, VAD_INTERVAL_MS);
+    } catch (error) {
+      console.error('[WebRTC] Could not initialize voice activity detection:', error);
+      this.stopVoiceActivityDetection();
     }
   }
 
-  notifyVolume(val) {
-    this.volumeListeners.forEach((cb) => {
-      try { cb(val); } catch (e) {}
-    });
+  stopVoiceActivityDetection() {
+    if (this.vadInterval !== null) {
+      clearInterval(this.vadInterval);
+      this.vadInterval = null;
+    }
+
+    if (this.audioSource) {
+      try {
+        this.audioSource.disconnect();
+      } catch (error) {
+        console.warn('[WebRTC] Audio source disconnect failed:', error);
+      }
+
+      this.audioSource = null;
+    }
+
+    this.audioAnalyser = null;
+    this.audioData = null;
+  }
+
+  updateSpeakingStatus(speaking) {
+    if (this.isSpeaking === speaking) return;
+
+    this.isSpeaking = speaking;
+    this.emitSpeakingStatus(speaking);
   }
 
   emitSpeakingStatus(speaking) {
-    if (this.socket) {
-      this.socket.emit('voice-status-change', {
-        userId: this.currentUserId,
-        isSpeaking: speaking,
-        isMuted: this.isMicMuted,
-      });
-    }
+    this.socket?.emit('voice-status-change', {
+      userId: this.currentUserId,
+      isSpeaking: speaking,
+      isMuted: this.isMicMuted,
+    });
   }
 
   toggleMicrophone() {
+    if (this.isDestroyed) return false;
+
     spatialMixerInstance.resume();
     this.isMicMuted = !this.isMicMuted;
-    if (this.localStream) {
-      this.localStream.getAudioTracks().forEach((track) => {
-        track.enabled = !this.isMicMuted;
-      });
+
+    this.localStream?.getAudioTracks().forEach((track) => {
+      track.enabled = !this.isMicMuted;
+    });
+
+    this.micStatus = this.isMicMuted
+      ? 'muted'
+      : this.localStream
+        ? this.localStream.getAudioTracks().length > 0
+          ? 'active'
+          : 'synthetic'
+        : 'requesting';
+
+    if (this.isMicMuted) {
+      this.currentVolume = 0;
+      this.notifyVolume(0);
     }
-    this.micStatus = this.isMicMuted ? 'muted' : this.localStream ? 'active' : 'synthetic';
+
     this.notifyStatus();
+    this.updateSpeakingStatus(false);
     this.emitSpeakingStatus(false);
+
     return !this.isMicMuted;
   }
 
   toggleLoopback() {
+    if (this.isDestroyed) return false;
     return spatialMixerInstance.toggleMicLoopback(this.localStream);
   }
 
-  /**
-   * Dynamic WebRTC Peer Handshake when peer enters 100px earshot
-   */
-  async handlePeerEnteredEarshot(peer, shouldInitiateOffer) {
-    const peerId = peer.userId;
-    if (this.peerConnections.has(peerId)) {
-      return;
+  createPeerConnection(peerId) {
+    if (this.isDestroyed) {
+      throw new Error('WebRTCManager has been destroyed.');
     }
 
-    console.log(`[WebRTC Mesh] Peer ${peerId} entered earshot. Creating connection (Initiator: ${shouldInitiateOffer})`);
+    const existing = this.peerConnections.get(peerId);
+    if (existing) return existing;
 
     const pc = new RTCPeerConnection(RTC_CONFIG);
     this.peerConnections.set(peerId, pc);
 
-    // Attach local audio tracks
-    if (this.localStream) {
-      this.localStream.getAudioTracks().forEach((track) => {
-        pc.addTrack(track, this.localStream);
-      });
-    }
+    this.localStream?.getAudioTracks().forEach((track) => {
+      pc.addTrack(track, this.localStream);
+    });
 
-    // ICE Candidate handler
     pc.onicecandidate = (event) => {
-      if (event.candidate && this.socket) {
-        this.socket.emit('webrtc-ice-candidate', {
-          targetUserId: peerId,
-          candidate: event.candidate,
-        });
-      }
+      if (!event.candidate) return;
+
+      this.socket?.emit('webrtc-ice-candidate', {
+        targetUserId: peerId,
+        candidate: event.candidate,
+      });
     };
 
-    // Remote audio track handler: send straight into SpatialAudioMixer!
     pc.ontrack = (event) => {
-      console.log(`[WebRTC Mesh] Received audio track from peer ${peerId}`);
-      if (event.streams && event.streams[0]) {
+      if (event.streams?.[0]) {
         spatialMixerInstance.addPeerStream(peerId, event.streams[0]);
       }
     };
 
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC Mesh] Connection state for ${peerId}: ${pc.connectionState}`);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      console.log(`[WebRTC] Connection state for ${peerId}:`, pc.connectionState);
+
+      if (
+        pc.connectionState === 'failed' ||
+        pc.connectionState === 'closed'
+      ) {
         this.handlePeerLeftEarshot(peerId);
       }
     };
 
-    // If designated as offer initiator
-    if (shouldInitiateOffer) {
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+    return pc;
+  }
 
-        this.socket.emit('webrtc-offer', {
-          targetUserId: peerId,
-          sdp: pc.localDescription,
-        });
-      } catch (err) {
-        console.error(`[WebRTC] Failed to create offer for ${peerId}:`, err);
+  async handlePeerEnteredEarshot(peer, shouldInitiateOffer) {
+    if (this.isDestroyed || !peer?.userId) return;
+
+    const peerId = peer.userId;
+    if (this.peerConnections.has(peerId)) return;
+
+    let pc;
+
+    try {
+      pc = this.createPeerConnection(peerId);
+
+      if (!shouldInitiateOffer) return;
+
+      const offer = await pc.createOffer();
+
+      if (
+        this.isDestroyed ||
+        this.peerConnections.get(peerId) !== pc
+      ) {
+        return;
       }
+
+      await pc.setLocalDescription(offer);
+
+      if (
+        this.isDestroyed ||
+        this.peerConnections.get(peerId) !== pc
+      ) {
+        return;
+      }
+
+      this.socket?.emit('webrtc-offer', {
+        targetUserId: peerId,
+        sdp: pc.localDescription,
+      });
+    } catch (error) {
+      console.error(`[WebRTC] Failed to create offer for ${peerId}:`, error);
+      this.handlePeerLeftEarshot(peerId);
     }
   }
 
-  /**
-   * Handle incoming WebRTC Offer
-   */
   async handleOffer(fromUserId, sdp) {
-    let pc = this.peerConnections.get(fromUserId);
-    if (!pc) {
-      pc = new RTCPeerConnection(RTC_CONFIG);
-      this.peerConnections.set(fromUserId, pc);
+    if (this.isDestroyed || !fromUserId || !sdp) return;
 
-      if (this.localStream) {
-        this.localStream.getAudioTracks().forEach((track) => {
-          pc.addTrack(track, this.localStream);
-        });
-      }
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate && this.socket) {
-          this.socket.emit('webrtc-ice-candidate', {
-            targetUserId: fromUserId,
-            candidate: event.candidate,
-          });
-        }
-      };
-
-      pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          spatialMixerInstance.addPeerStream(fromUserId, event.streams[0]);
-        }
-      };
-    }
+    let pc;
 
     try {
+      pc = this.createPeerConnection(fromUserId);
+
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      await this.flushPendingIceCandidates(fromUserId, pc);
+
+      if (
+        this.isDestroyed ||
+        this.peerConnections.get(fromUserId) !== pc
+      ) {
+        return;
+      }
+
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      this.socket.emit('webrtc-answer', {
+      if (
+        this.isDestroyed ||
+        this.peerConnections.get(fromUserId) !== pc
+      ) {
+        return;
+      }
+
+      this.socket?.emit('webrtc-answer', {
         targetUserId: fromUserId,
         sdp: pc.localDescription,
       });
-    } catch (err) {
-      console.error(`[WebRTC] Error handling offer from ${fromUserId}:`, err);
+    } catch (error) {
+      console.error(`[WebRTC] Error handling offer from ${fromUserId}:`, error);
+      this.handlePeerLeftEarshot(fromUserId);
     }
   }
 
-  /**
-   * Handle incoming WebRTC Answer
-   */
   async handleAnswer(fromUserId, sdp) {
     const pc = this.peerConnections.get(fromUserId);
-    if (!pc) return;
+    if (!pc || !sdp || this.isDestroyed) return;
 
     try {
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    } catch (err) {
-      console.error(`[WebRTC] Error setting remote answer from ${fromUserId}:`, err);
+      await this.flushPendingIceCandidates(fromUserId, pc);
+    } catch (error) {
+      console.error(`[WebRTC] Error setting remote answer from ${fromUserId}:`, error);
+      this.handlePeerLeftEarshot(fromUserId);
     }
   }
 
-  /**
-   * Handle incoming ICE Candidate
-   */
   async handleIceCandidate(fromUserId, candidate) {
+    if (!candidate || this.isDestroyed) return;
+
     const pc = this.peerConnections.get(fromUserId);
-    if (!pc) return;
+
+    if (!pc || !pc.remoteDescription) {
+      const pending = this.pendingIceCandidates.get(fromUserId) || [];
+      pending.push(candidate);
+      this.pendingIceCandidates.set(fromUserId, pending);
+      return;
+    }
 
     try {
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (err) {
-      console.error(`[WebRTC] Error adding ICE candidate from ${fromUserId}:`, err);
+    } catch (error) {
+      console.error(`[WebRTC] Error adding ICE candidate from ${fromUserId}:`, error);
     }
   }
 
-  /**
-   * Mesh Scaling teardown when peer leaves 100px earshot
-   */
+  async flushPendingIceCandidates(peerId, pc) {
+    if (!pc.remoteDescription) return;
+
+    const pending = this.pendingIceCandidates.get(peerId);
+    if (!pending?.length) return;
+
+    this.pendingIceCandidates.delete(peerId);
+
+    for (const candidate of pending) {
+      if (
+        this.isDestroyed ||
+        this.peerConnections.get(peerId) !== pc
+      ) {
+        return;
+      }
+
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.error(`[WebRTC] Error adding queued ICE candidate from ${peerId}:`, error);
+      }
+    }
+  }
+
   handlePeerLeftEarshot(peerId) {
-    console.log(`[WebRTC Mesh] Peer ${peerId} left earshot. Closing peer connection.`);
     const pc = this.peerConnections.get(peerId);
+
     if (pc) {
+      pc.onicecandidate = null;
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
       pc.close();
+
       this.peerConnections.delete(peerId);
     }
+
+    this.pendingIceCandidates.delete(peerId);
     spatialMixerInstance.removePeerStream(peerId);
   }
 
   destroy() {
-    if (this.vadInterval) clearInterval(this.vadInterval);
-    this.peerConnections.forEach((pc) => pc.close());
+    if (this.isDestroyed) return;
+
+    this.isDestroyed = true;
+    this.stopVoiceActivityDetection();
+
+    this.peerConnections.forEach((pc) => {
+      pc.onicecandidate = null;
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.close();
+    });
+
     this.peerConnections.clear();
+    this.pendingIceCandidates.clear();
+
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream = null;
     }
+
+    if (this.syntheticOscillator) {
+      try {
+        this.syntheticOscillator.stop();
+        this.syntheticOscillator.disconnect();
+      } catch (error) {
+        console.warn('[WebRTC] Synthetic oscillator cleanup failed:', error);
+      }
+
+      this.syntheticOscillator = null;
+    }
+
+    if (this.syntheticGain) {
+      try {
+        this.syntheticGain.disconnect();
+      } catch (error) {
+        console.warn('[WebRTC] Synthetic gain cleanup failed:', error);
+      }
+
+      this.syntheticGain = null;
+    }
+
+    this.isSpeaking = false;
+    this.currentVolume = 0;
+    this.notifyVolume(0);
+
+    this.volumeListeners.clear();
+    this.statusListeners.clear();
   }
 }
 
