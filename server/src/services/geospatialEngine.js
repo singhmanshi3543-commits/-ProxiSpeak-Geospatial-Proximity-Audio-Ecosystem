@@ -14,7 +14,6 @@ export class GeospatialEngine {
     try {
       const [x, y] = coordinates;
 
-      // Query using MongoDB 2D Euclidean $near operator
       const nearbyUsers = await UserLocation.find({
         userId: { $ne: userId },
         coordinates: {
@@ -26,12 +25,10 @@ export class GeospatialEngine {
         .lean()
         .exec();
 
-      // Compute exact Euclidean distance and relative offset for audio panning & attenuation
       const resultsWithMetrics = nearbyUsers.map((peer) => {
         const dx = peer.coordinates[0] - x;
         const dy = peer.coordinates[1] - y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        // Normalized gain: 1.0 at distance 0, dropping to 0.0 at earshot radius (100px)
+        const distance = Math.hypot(dx,dy);
         const normalizedGain = Math.max(0, Math.min(1, 1 - distance / maxDistance));
 
         return {
@@ -108,8 +105,10 @@ export class GeospatialEngine {
           const neighbor = users[j];
           if (!visited.has(neighbor.userId)) {
             const [nx, ny] = neighbor.coordinates;
-            const dist = Math.hypot(nx - cx, ny - cy);
-            if (dist <= maxDistance) {
+            const dx= nx-cx;
+            const dy= ny-cy;
+
+            if (dx*dx + dy*dy <= maxDistance*maxDistance) {
               visited.add(neighbor.userId);
               cluster.push(neighbor);
               queue.push(neighbor);
@@ -141,7 +140,6 @@ export class GeospatialEngine {
   static async runSpatialAudit(concurrentUsers = 50, iterations = 25, earshotRadius = 100) {
     console.log(`[SpatialAudit] Starting benchmark with ${concurrentUsers} concurrent users over ${iterations} iterations...`);
 
-    // 1. Seed or ensure sample user positions
     const existingCount = await UserLocation.countDocuments();
     if (existingCount < concurrentUsers) {
       const needed = concurrentUsers - existingCount;
@@ -163,7 +161,6 @@ export class GeospatialEngine {
       await UserLocation.insertMany(seedUsers);
     }
 
-    // 2. Execute $near spatial benchmark iterations
     const latencies = [];
     const sampleQueryPositions = [
       [200, 250], [500, 300], [800, 450], [1100, 600], [350, 750],
@@ -198,10 +195,8 @@ export class GeospatialEngine {
 
     const passed20msAudit = avgLatencyMs < 20.0 && p95LatencyMs < 20.0;
 
-    // 3. Compute active clusters
     const clusters = await this.computeProximityClusters(earshotRadius);
 
-    // 4. Save audit log record into MongoDB
     const auditRecord = new SpatialAuditLog({
       concurrentUsersCount: concurrentUsers,
       earshotRadiusPx: earshotRadius,
