@@ -97,8 +97,9 @@ export class GeospatialEngine {
       visited.add(user.userId);
 
       const queue = [user];
-      while (queue.length > 0) {
-        const current = queue.shift();
+      let queueIndex = 0;
+      while (queueIndex < queue.length) {
+        const current = queue[queueIndex++];
         const [cx, cy] = current.coordinates;
 
         for (let j = 0; j < users.length; j++) {
