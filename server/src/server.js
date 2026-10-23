@@ -69,8 +69,9 @@ async function startServer() {
       console.log(`=======================================================`);
     });
   } catch (error) {
-    console.error('Fatal server startup error:', error);
-    process.exit(1);
+    console.error('[Startup] Failed to initialize server:', error);
+    process.exitCode = 1;
+    return;
   }
 }
 
