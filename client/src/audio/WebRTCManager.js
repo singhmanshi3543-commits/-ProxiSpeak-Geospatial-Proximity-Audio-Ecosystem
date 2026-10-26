@@ -1,4 +1,3 @@
-
 import spatialMixerInstance from './SpatialAudioMixer.js';
 
 const RTC_CONFIG = {
@@ -10,15 +9,21 @@ const RTC_CONFIG = {
 
 const VAD_INTERVAL_MS = 80;
 const SPEAKING_THRESHOLD = 14;
+const MAX_PENDING_ICE_CANDIDATES = 50;
 
+/**
+ * WebRTC Mesh Manager for ProxiSpeak
+ * Handles peer-connection lifecycles, dynamic mesh audio handshakes within proximity,
+ * glare-free negotiation, stale candidate filtering, and Voice Activity Detection (VAD).
+ */
 export class WebRTCManager {
   constructor(socket, currentUserId) {
     this.socket = socket;
     this.currentUserId = currentUserId;
 
     this.localStream = null;
-    this.peerConnections = new Map();
-    this.pendingIceCandidates = new Map();
+    this.peerConnections = new Map(); // peerId -> RTCPeerConnection
+    this.pendingIceCandidates = new Map(); // peerId -> Array<RTCIceCandidateInit>
 
     this.audioAnalyser = null;
     this.audioSource = null;
@@ -32,8 +37,8 @@ export class WebRTCManager {
     this.vadInterval = null;
     this.initPromise = null;
 
-    this.micStatus = 'requesting';
-    this.currentVolume = 0;
+    this.micStatus = 'requesting'; // 'active' | 'muted' | 'synthetic' | 'blocked'
+    this.currentVolume = 0; // 0..100
 
     this.volumeListeners = new Set();
     this.statusListeners = new Set();
@@ -41,17 +46,14 @@ export class WebRTCManager {
 
   onVolumeUpdate(callback) {
     if (typeof callback !== 'function') return () => {};
-
     this.volumeListeners.add(callback);
     return () => this.volumeListeners.delete(callback);
   }
 
   onStatusUpdate(callback) {
     if (typeof callback !== 'function') return () => {};
-
     this.statusListeners.add(callback);
     callback(this.micStatus);
-
     return () => this.statusListeners.delete(callback);
   }
 
@@ -75,6 +77,9 @@ export class WebRTCManager {
     });
   }
 
+  /**
+   * Request user microphone stream or fallback to synthetic audio
+   */
   async initLocalStream(useFallbackSynth = false) {
     if (this.isDestroyed) {
       throw new Error('WebRTCManager has been destroyed.');
@@ -113,7 +118,7 @@ export class WebRTCManager {
       });
 
       if (this.isDestroyed) {
-        stream.getTracks().forEach((track) => track.stop());
+        stream?.getTracks?.().forEach((track) => track.stop?.());
         throw new Error('WebRTCManager was destroyed during initialization.');
       }
 
@@ -123,7 +128,7 @@ export class WebRTCManager {
       if (this.isDestroyed) throw error;
 
       console.warn(
-        '[WebRTC] Microphone unavailable. Using synthetic audio:',
+        '[WebRTC] Microphone unavailable. Using synthetic audio fallback:',
         error.message
       );
 
@@ -150,7 +155,7 @@ export class WebRTCManager {
     }
 
     if (this.isDestroyed) {
-      stream.getTracks().forEach((track) => track.stop());
+      stream?.getTracks?.().forEach((track) => track.stop?.());
       throw new Error('WebRTCManager was destroyed during initialization.');
     }
 
@@ -162,12 +167,42 @@ export class WebRTCManager {
       });
     }
 
+    // Attach local stream tracks to any existing peer connections created prior to mic resolution
+    this.peerConnections.forEach((pc) => {
+      this._attachLocalTracksToPeer(pc);
+    });
+
     this.notifyStatus();
     this.setupVoiceActivityDetection();
 
     return stream;
   }
 
+  /**
+   * Safely attach local audio tracks to a peer connection if not already present
+   */
+  _attachLocalTracksToPeer(pc) {
+    if (!this.localStream || pc.signalingState === 'closed') return;
+
+    const tracks = this.localStream.getAudioTracks();
+    if (!tracks.length) return;
+
+    const currentSenders = pc.getSenders();
+    tracks.forEach((track) => {
+      const alreadyAdded = currentSenders.some((sender) => sender.track === track);
+      if (!alreadyAdded) {
+        try {
+          pc.addTrack(track, this.localStream);
+        } catch (error) {
+          console.warn('[WebRTC] Failed to attach audio track to peer connection:', error);
+        }
+      }
+    });
+  }
+
+  /**
+   * Voice Activity Detection (VAD) & Live VU Meter
+   */
   setupVoiceActivityDetection() {
     this.stopVoiceActivityDetection();
 
@@ -229,7 +264,6 @@ export class WebRTCManager {
       } catch (error) {
         console.warn('[WebRTC] Audio source disconnect failed:', error);
       }
-
       this.audioSource = null;
     }
 
@@ -239,7 +273,6 @@ export class WebRTCManager {
 
   updateSpeakingStatus(speaking) {
     if (this.isSpeaking === speaking) return;
-
     this.isSpeaking = speaking;
     this.emitSpeakingStatus(speaking);
   }
@@ -287,23 +320,38 @@ export class WebRTCManager {
     return spatialMixerInstance.toggleMicLoopback(this.localStream);
   }
 
+  /**
+   * Create or return an existing active RTCPeerConnection for the given peer.
+   * If an existing connection is dead or failed, tears it down first.
+   */
   createPeerConnection(peerId) {
     if (this.isDestroyed) {
       throw new Error('WebRTCManager has been destroyed.');
     }
 
     const existing = this.peerConnections.get(peerId);
-    if (existing) return existing;
+    if (existing) {
+      if (
+        existing.connectionState !== 'closed' &&
+        existing.connectionState !== 'failed' &&
+        existing.signalingState !== 'closed'
+      ) {
+        return existing;
+      }
+      this.handlePeerLeftEarshot(peerId);
+    }
+
+    // Ensure stale queued candidates are discarded for a new connection
+    this.pendingIceCandidates.delete(peerId);
 
     const pc = new RTCPeerConnection(RTC_CONFIG);
     this.peerConnections.set(peerId, pc);
 
-    this.localStream?.getAudioTracks().forEach((track) => {
-      pc.addTrack(track, this.localStream);
-    });
+    // Attach local audio tracks
+    this._attachLocalTracksToPeer(pc);
 
     pc.onicecandidate = (event) => {
-      if (!event.candidate) return;
+      if (!event.candidate || this.isDestroyed) return;
 
       this.socket?.emit('webrtc-ice-candidate', {
         targetUserId: peerId,
@@ -312,8 +360,12 @@ export class WebRTCManager {
     };
 
     pc.ontrack = (event) => {
-      if (event.streams?.[0]) {
-        spatialMixerInstance.addPeerStream(peerId, event.streams[0]);
+      let stream = event.streams?.[0];
+      if (!stream && event.track) {
+        stream = new MediaStream([event.track]);
+      }
+      if (stream) {
+        spatialMixerInstance.addPeerStream(peerId, stream);
       }
     };
 
@@ -328,14 +380,53 @@ export class WebRTCManager {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[WebRTC] ICE connection state for ${peerId}:`, pc.iceConnectionState);
+
+      if (
+        pc.iceConnectionState === 'failed' ||
+        pc.iceConnectionState === 'closed'
+      ) {
+        this.handlePeerLeftEarshot(peerId);
+      }
+    };
+
     return pc;
   }
 
+  /**
+   * Dynamic WebRTC Peer Handshake when peer enters 100px proximity earshot.
+   * Prevents duplicate peer connections and ensures local audio stream readiness.
+   */
   async handlePeerEnteredEarshot(peer, shouldInitiateOffer) {
     if (this.isDestroyed || !peer?.userId) return;
 
     const peerId = peer.userId;
-    if (this.peerConnections.has(peerId)) return;
+
+    // Await ongoing local stream initialization so initial offer/connection includes audio
+    if (!this.localStream && this.initPromise) {
+      try {
+        await this.initPromise;
+      } catch (err) {
+        // Fallback or error handled in initPromise
+      }
+    }
+
+    if (this.isDestroyed) return;
+
+    const existingPc = this.peerConnections.get(peerId);
+    if (existingPc) {
+      if (
+        existingPc.connectionState === 'closed' ||
+        existingPc.connectionState === 'failed' ||
+        existingPc.signalingState === 'closed'
+      ) {
+        this.handlePeerLeftEarshot(peerId);
+      } else {
+        // Active healthy connection already exists; prevent duplicate handshake
+        return;
+      }
+    }
 
     let pc;
 
@@ -348,7 +439,8 @@ export class WebRTCManager {
 
       if (
         this.isDestroyed ||
-        this.peerConnections.get(peerId) !== pc
+        this.peerConnections.get(peerId) !== pc ||
+        pc.signalingState === 'closed'
       ) {
         return;
       }
@@ -357,7 +449,8 @@ export class WebRTCManager {
 
       if (
         this.isDestroyed ||
-        this.peerConnections.get(peerId) !== pc
+        this.peerConnections.get(peerId) !== pc ||
+        pc.signalingState === 'closed'
       ) {
         return;
       }
@@ -372,20 +465,58 @@ export class WebRTCManager {
     }
   }
 
+  /**
+   * Handle incoming WebRTC Offer.
+   * Implements polite peer glare resolution and flushes queued ICE candidates safely.
+   */
   async handleOffer(fromUserId, sdp) {
     if (this.isDestroyed || !fromUserId || !sdp) return;
 
-    let pc;
+    if (!this.localStream && this.initPromise) {
+      try {
+        await this.initPromise;
+      } catch (err) {}
+    }
+
+    if (this.isDestroyed) return;
+
+    let pc = this.peerConnections.get(fromUserId);
+    if (
+      pc &&
+      (pc.connectionState === 'closed' ||
+        pc.connectionState === 'failed' ||
+        pc.signalingState === 'closed')
+    ) {
+      this.handlePeerLeftEarshot(fromUserId);
+      pc = null;
+    }
 
     try {
-      pc = this.createPeerConnection(fromUserId);
+      if (!pc) {
+        pc = this.createPeerConnection(fromUserId);
+      }
+
+      // Handle glare (both peers sent an offer simultaneously)
+      if (pc.signalingState === 'have-local-offer') {
+        const isPolite = this.currentUserId > fromUserId;
+        if (!isPolite) {
+          console.warn(`[WebRTC] Glare with ${fromUserId}: impolite peer ignoring incoming offer.`);
+          return;
+        }
+        console.log(`[WebRTC] Glare with ${fromUserId}: polite peer rolling back local offer.`);
+        await pc.setLocalDescription({ type: 'rollback' });
+      } else if (pc.signalingState === 'have-remote-offer') {
+        console.warn(`[WebRTC] Duplicate remote offer from ${fromUserId} ignored.`);
+        return;
+      }
 
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await this.flushPendingIceCandidates(fromUserId, pc);
 
       if (
         this.isDestroyed ||
-        this.peerConnections.get(fromUserId) !== pc
+        this.peerConnections.get(fromUserId) !== pc ||
+        pc.signalingState === 'closed'
       ) {
         return;
       }
@@ -395,7 +526,8 @@ export class WebRTCManager {
 
       if (
         this.isDestroyed ||
-        this.peerConnections.get(fromUserId) !== pc
+        this.peerConnections.get(fromUserId) !== pc ||
+        pc.signalingState === 'closed'
       ) {
         return;
       }
@@ -410,9 +542,22 @@ export class WebRTCManager {
     }
   }
 
+  /**
+   * Handle incoming WebRTC Answer.
+   * Safely ignores duplicate or out-of-order answers without tearing down connection.
+   */
   async handleAnswer(fromUserId, sdp) {
+    if (this.isDestroyed || !fromUserId || !sdp) return;
+
     const pc = this.peerConnections.get(fromUserId);
-    if (!pc || !sdp || this.isDestroyed) return;
+    if (!pc) return;
+
+    if (pc.signalingState !== 'have-local-offer') {
+      console.warn(
+        `[WebRTC] Ignoring answer from ${fromUserId}: signalingState is '${pc.signalingState}' (expected 'have-local-offer')`
+      );
+      return;
+    }
 
     try {
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -423,27 +568,52 @@ export class WebRTCManager {
     }
   }
 
+  /**
+   * Handle incoming ICE Candidate.
+   * Discards stale candidates for disconnected/out-of-proximity peers.
+   */
   async handleIceCandidate(fromUserId, candidate) {
-    if (!candidate || this.isDestroyed) return;
+    if (!candidate || this.isDestroyed || !fromUserId) return;
 
     const pc = this.peerConnections.get(fromUserId);
 
-    if (!pc || !pc.remoteDescription) {
-      const pending = this.pendingIceCandidates.get(fromUserId) || [];
-      pending.push(candidate);
-      this.pendingIceCandidates.set(fromUserId, pending);
+    // Drop stale candidate if no active connection exists for this peer
+    if (
+      !pc ||
+      pc.signalingState === 'closed' ||
+      pc.connectionState === 'closed' ||
+      pc.connectionState === 'failed'
+    ) {
+      return;
+    }
+
+    // If remote description is not set yet, queue the candidate safely
+    if (!pc.remoteDescription) {
+      const queue = this.pendingIceCandidates.get(fromUserId) || [];
+      const candidateStr = typeof candidate === 'string' ? candidate : candidate.candidate;
+      const isDuplicate = queue.some(
+        (c) => (typeof c === 'string' ? c : c.candidate) === candidateStr
+      );
+
+      if (!isDuplicate && queue.length < MAX_PENDING_ICE_CANDIDATES) {
+        queue.push(candidate);
+        this.pendingIceCandidates.set(fromUserId, queue);
+      }
       return;
     }
 
     try {
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (error) {
-      console.error(`[WebRTC] Error adding ICE candidate from ${fromUserId}:`, error);
+      console.warn(`[WebRTC] Non-fatal error adding ICE candidate from ${fromUserId}:`, error.message);
     }
   }
 
+  /**
+   * Safely flush queued ICE candidates once remote description is established
+   */
   async flushPendingIceCandidates(peerId, pc) {
-    if (!pc.remoteDescription) return;
+    if (!pc || !pc.remoteDescription || pc.signalingState === 'closed') return;
 
     const pending = this.pendingIceCandidates.get(peerId);
     if (!pending?.length) return;
@@ -453,7 +623,8 @@ export class WebRTCManager {
     for (const candidate of pending) {
       if (
         this.isDestroyed ||
-        this.peerConnections.get(peerId) !== pc
+        this.peerConnections.get(peerId) !== pc ||
+        pc.signalingState === 'closed'
       ) {
         return;
       }
@@ -461,11 +632,14 @@ export class WebRTCManager {
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (error) {
-        console.error(`[WebRTC] Error adding queued ICE candidate from ${peerId}:`, error);
+        console.warn(`[WebRTC] Non-fatal error adding queued ICE candidate from ${peerId}:`, error.message);
       }
     }
   }
 
+  /**
+   * Teardown connection and release spatial audio resources when peer leaves proximity
+   */
   handlePeerLeftEarshot(peerId) {
     const pc = this.peerConnections.get(peerId);
 
@@ -473,33 +647,65 @@ export class WebRTCManager {
       pc.onicecandidate = null;
       pc.ontrack = null;
       pc.onconnectionstatechange = null;
-      pc.close();
+      pc.oniceconnectionstatechange = null;
+      pc.onsignalingstatechange = null;
+
+      try {
+        pc.close();
+      } catch (error) {
+        console.warn(`[WebRTC] Error closing peer connection for ${peerId}:`, error);
+      }
 
       this.peerConnections.delete(peerId);
     }
 
+    // Always clear queued candidates so they never bleed into future sessions
     this.pendingIceCandidates.delete(peerId);
+
+    // Clean up Web Audio nodes for this peer
     spatialMixerInstance.removePeerStream(peerId);
   }
 
+  getPeerConnection(peerId) {
+    return this.peerConnections.get(peerId);
+  }
+
+  hasPeerConnection(peerId) {
+    return this.peerConnections.has(peerId);
+  }
+
+  getActivePeerIds() {
+    return Array.from(this.peerConnections.keys());
+  }
+
+  /**
+   * Complete destruction and cleanup of all WebRTC connections, audio tracks, and VAD
+   */
   destroy() {
     if (this.isDestroyed) return;
 
     this.isDestroyed = true;
     this.stopVoiceActivityDetection();
 
-    this.peerConnections.forEach((pc) => {
+    this.peerConnections.forEach((pc, peerId) => {
       pc.onicecandidate = null;
       pc.ontrack = null;
       pc.onconnectionstatechange = null;
-      pc.close();
+      pc.oniceconnectionstatechange = null;
+      pc.onsignalingstatechange = null;
+
+      try {
+        pc.close();
+      } catch (error) {}
+
+      spatialMixerInstance.removePeerStream(peerId);
     });
 
     this.peerConnections.clear();
     this.pendingIceCandidates.clear();
 
     if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream?.getTracks?.().forEach((track) => track.stop?.());
       this.localStream = null;
     }
 
@@ -510,7 +716,6 @@ export class WebRTCManager {
       } catch (error) {
         console.warn('[WebRTC] Synthetic oscillator cleanup failed:', error);
       }
-
       this.syntheticOscillator = null;
     }
 
@@ -520,7 +725,6 @@ export class WebRTCManager {
       } catch (error) {
         console.warn('[WebRTC] Synthetic gain cleanup failed:', error);
       }
-
       this.syntheticGain = null;
     }
 
