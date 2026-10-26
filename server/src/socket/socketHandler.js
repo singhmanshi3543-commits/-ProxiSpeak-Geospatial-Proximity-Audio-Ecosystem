@@ -104,17 +104,28 @@ export function initializeSocketHandlers(io) {
       }
     });
 
-    socket.on('avatar-move', async (data) => {
+    socket.on('avatar-move', async (data = {}) => {
       try {
-        const { userId, coordinates, facingAngle = 0, isSpeaking = false } = data;
+        if(!data || typeof data !== 'object' || Array.isArray(data)) return;
+        const { 
+          coordinates, 
+          facingAngle = 0, 
+          isSpeaking = false 
+        } = data;
+        const userId = signalingManager.getUserId(socket.id);
         if (
-          !userId || 
+          !userId ||
           !Array.isArray(coordinates) ||
-          coordinates.length != 2 ||
-          !coordinates.every(Number.isFinite)
+          coordinates.length !== 2 ||
+          !coordinates.every(value=> typeof value === 'number' && Number.isFinite(value)) || 
+          typeof facingAngle !== 'number' ||
+          !Number.isFinite(facingAngle) || 
+          typeof isSpeaking !== 'boolean'
         ){
           return;
         }
+
+        await signalingManager.handleUserMovement(userId, coordinates, facingAngle, isSpeaking);
 
         socket.broadcast.emit('peer-moved', {
           userId,
@@ -122,8 +133,6 @@ export function initializeSocketHandlers(io) {
           facingAngle,
           isSpeaking,
         });
-
-        await signalingManager.handleUserMovement(userId, coordinates, facingAngle, isSpeaking);
       } catch (err) {
         console.error('[Socket] avatar-move error:', err);
       }
