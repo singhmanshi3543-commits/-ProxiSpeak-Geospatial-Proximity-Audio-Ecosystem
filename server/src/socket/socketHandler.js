@@ -8,6 +8,15 @@ export function initializeSocketHandlers(io) {
   io.on('connection', (socket) => {
     socket.on('join-world', async (userData, callback) => {
       try {
+        if(!userData || typeof userData !== 'object' || Array.isArray(userData)){
+          if(typeof callback === 'function'){
+            callback({
+              status: 'error',
+              message: 'Invalid user data',
+            });
+          }
+          return;
+        }
         const {
           userId,
           username,
@@ -126,6 +135,8 @@ export function initializeSocketHandlers(io) {
         ){
           return;
         }
+
+        if(!socket.connected) return;
 
         await signalingManager.handleUserMovement(userId, coordinates, facingAngle, isSpeaking);
 
