@@ -120,6 +120,8 @@ export function initializeSocketHandlers(io) {
           !coordinates.every(value=> typeof value === 'number' && Number.isFinite(value)) || 
           typeof facingAngle !== 'number' ||
           !Number.isFinite(facingAngle) || 
+          facingAngle< -360 || 
+          facingAngle> 360 ||
           typeof isSpeaking !== 'boolean'
         ){
           return;
