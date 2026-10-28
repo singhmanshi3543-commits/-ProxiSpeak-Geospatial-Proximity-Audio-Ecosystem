@@ -25,6 +25,21 @@ export function initializeSocketHandlers(io) {
           initialCoordinates = [400, 300],
         } = userData;
 
+        if(
+          typeof userId !== 'string' ||
+          !userId.trim() ||
+          typeof username !== 'string' ||
+          !username.trim()
+        ){
+          if(typeof callback === 'function'){
+            callback({
+              status: 'error',
+              message: 'User ID and username are required',
+            });
+          }
+          return;
+        }
+
         const [x, y] = initialCoordinates;
 
         const userDoc = await UserLocation.findOneAndUpdate(
