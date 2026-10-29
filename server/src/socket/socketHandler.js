@@ -168,8 +168,17 @@ export function initializeSocketHandlers(io) {
 
     socket.on('voice-status-change', async (data) => {
       try {
-        const { userId, isSpeaking, isMuted, isDeafened } = data;
-        if (!userId) return;
+        if(!data || typeof data !== 'object' || Array.isArray(data)) return;
+
+            const { userId, isSpeaking, isMuted, isDeafened } = data;
+
+            if(typeof userId !== 'string' || !userId.trim()) return;
+
+            if(
+              (isSpeaking !== undefined && typeof isSpeaking !== 'boolean') || 
+                 (isMuted !== undefined && typeof isMuted !== 'boolean' ) ||
+                 (isDeafened !== undefined && typeof isDeafened !== 'boolean')
+            ) return;
 
         await UserLocation.updateOne(
           { userId },
