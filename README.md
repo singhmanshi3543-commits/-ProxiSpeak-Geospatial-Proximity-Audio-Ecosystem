@@ -90,7 +90,11 @@ graph TD
   - Directional facing visor pointer.
   - Interactive destination click waypoint.
 
+### Recent Code Maintenance
+The frontend and audio modules have also been reviewed for maintainability and connection reliability. Work on `WebRTCManager.js` focused on preventing duplicate peer connections, handling offer/answer negotiation and queued ICE candidates more safely, and cleaning up peer resources when a user leaves. These changes are intended to preserve compatibility with the existing Socket.IO signaling and spatial-audio modules.
+
 ---
+
 
 ## 📅 Week-Wise Development Plan & Audit Mapping
 
@@ -131,40 +135,53 @@ Passed Sub-20ms Standard:  YES (PASSED)
 - Node.js (v18+ recommended; tested on v24.16.0)
 - MongoDB running locally on default port `27017`
 
-### 1. Installation
-Clone the repository and install all dependencies:
-```bash
-# In project root
-npm install
+### 1. Install Dependencies
+Open a terminal in the project folder, then install the backend and frontend dependencies separately:
 
-# Install server dependencies
+```bash
+# Backend dependencies
 cd server
 npm install
+```
 
-# Install client dependencies
-cd ../client
+Open a second terminal (or return to the project root) and install the frontend dependencies:
+
+```bash
+# Frontend dependencies
+cd client
 npm install
-cd ..
 ```
 
-### 2. Start Backend Server
+> Make sure MongoDB is running and that your environment configuration matches your local setup before starting the application.
+
+### 2. Start the Backend
+In Terminal 1:
+
 ```bash
-# Terminal 1: Starts Node.js backend on http://localhost:5000
-npm run server
+cd server
+npm start
 ```
 
-### 3. Start Frontend Client
+The backend should start on its configured port (commonly `5000`).
+
+### 3. Start the Frontend
+In Terminal 2:
+
 ```bash
-# Terminal 2: Starts Vite React client on http://localhost:3000
-npm run client
+cd client
+npm run dev
 ```
 
-### 4. Run Standalone Spatial Audit Benchmark
+Vite prints the local URL in the terminal. Open that exact URL in your browser; it is commonly `http://localhost:5173/`, but the port can vary.
+
+### 4. Run the Spatial Audit (If Configured)
+From the project root, run the audit command only if the root `package.json` defines it:
+
 ```bash
 npm run audit
 ```
 
-Open your browser and navigate to **[http://localhost:3000](http://localhost:3000)**!
+If npm reports that the script is missing, check the available scripts in `package.json` before running the audit.
 
 ---
 
@@ -222,3 +239,20 @@ Open your browser and navigate to **[http://localhost:3000](http://localhost:300
 - [x] Mid-Project Spatial Audit Verified (< 20ms latency benchmark: **3.18ms**)
 - [x] Redis Pub/Sub Adapter Architecture for Horizontal Multi-Node Scaling
 - [x] Full Week-by-Week Development Plan Implemented and Documented
+
+
+---
+
+## 🧩 Frontend Module Guide
+
+| File | Responsibility |
+| :--- | :--- |
+| `client/src/main.jsx` | Initializes the React application and mounts the root component. |
+| `client/src/components/VirtualOfficeCanvas.jsx` | Connects the virtual-office canvas with rendering and user interaction. |
+| `client/src/audio/WebRTCManager.js` | Manages peer-to-peer audio connections, signaling negotiation, ICE candidates, and peer cleanup. |
+| `client/src/audio/SpatialAudioMixer.js` | Applies distance-based volume and spatial audio effects to remote audio streams. |
+| `client/src/canvas/OfficeWorld.js` | Defines the virtual-office world layout and environment. |
+| `client/src/canvas/AvatarRenderer.js` | Draws user avatars in the virtual office. |
+| `client/src/canvas/Raycaster.js` | Checks line-of-sight/obstacles for the virtual environment's acoustic effects. |
+
+> File locations may differ between branches or project copies. Confirm the paths in your checkout before using this table as a file map.
