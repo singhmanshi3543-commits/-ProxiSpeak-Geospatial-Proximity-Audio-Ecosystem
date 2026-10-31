@@ -204,9 +204,12 @@ export function initializeSocketHandlers(io) {
 
     socket.on('webrtc-offer', (payload) => {
       const fromUserId = signalingManager.getUserId(socket.id);
-      if (fromUserId) {
-        signalingManager.handleWebRTCOffer(fromUserId, payload);
-      }
+      if(
+        !fromUserId || !payload || typeof payload !== 'object'
+        || Array.isArray(payload) || !payload.sdp
+      ) return ; 
+
+      signalingManager.handleWebRTCOffer(fromUserId , payload);
     });
 
     socket.on('webrtc-answer', (payload) => {
