@@ -61,7 +61,9 @@ export class WebRTCManager {
       pc &&
       pc.signalingState !== 'closed' &&
       pc.connectionState !== 'closed' &&
-      pc.connectionState !== 'failed'
+      pc.connectionState !== 'failed' &&
+      pc.iceConnectionState !== 'closed' &&
+      pc.iceConnectionState !== 'failed'
     );
   }
 
@@ -72,6 +74,24 @@ export class WebRTCManager {
     pc.onconnectionstatechange = null;
     pc.oniceconnectionstatechange = null;
     pc.onsignalingstatechange = null;
+
+    try {
+      pc.getReceivers?.().forEach((receiver) => {
+        try {
+          receiver.track?.stop?.();
+        } catch (e) {}
+      });
+    } catch (error) {
+      console.warn('[WebRTC] Error stopping receiver tracks:', error);
+    }
+
+    try {
+      pc.getSenders?.().forEach((sender) => {
+        try {
+          pc.removeTrack?.(sender);
+        } catch (e) {}
+      });
+    } catch (error) {}
 
     try {
       pc.close();
@@ -112,6 +132,7 @@ export class WebRTCManager {
 
   async _addIceCandidate(pc, candidate, peerId) {
     try {
+      if (!this._isConnectionActive(pc) || !pc.remoteDescription) return;
       const iceCandidate = candidate instanceof RTCIceCandidate ? candidate : new RTCIceCandidate(candidate);
       await pc.addIceCandidate(iceCandidate);
     } catch (error) {
@@ -405,6 +426,10 @@ export class WebRTCManager {
       throw new Error('WebRTCManager has been destroyed.');
     }
 
+    if (!peerId || peerId === this.currentUserId) {
+      return null;
+    }
+
     const existing = this.peerConnections.get(peerId);
     if (existing) {
       if (this._isConnectionActive(existing)) {
@@ -463,9 +488,15 @@ export class WebRTCManager {
   }
 
   async handlePeerEnteredEarshot(peer, shouldInitiateOffer) {
-    if (this.isDestroyed || !peer?.userId) return;
+    if (this.isDestroyed || !peer?.userId || peer.userId === this.currentUserId) return;
 
     const peerId = peer.userId;
+
+    // Fast check: If active connection already exists for this peer, prevent duplicate
+    const activePc = this.peerConnections.get(peerId);
+    if (activePc && this._isConnectionActive(activePc)) {
+      return;
+    }
 
     if (!this.localStream) {
       try {
@@ -487,7 +518,11 @@ export class WebRTCManager {
     let pc;
     try {
       pc = this.createPeerConnection(peerId);
-      if (!shouldInitiateOffer) return;
+      if (!pc || !shouldInitiateOffer) return;
+
+      if (pc.signalingState !== 'stable') {
+        return;
+      }
 
       const offer = await pc.createOffer();
 
@@ -522,7 +557,7 @@ export class WebRTCManager {
   }
 
   async handleOffer(fromUserId, sdp) {
-    if (this.isDestroyed || !fromUserId || !sdp) return;
+    if (this.isDestroyed || !fromUserId || !sdp || fromUserId === this.currentUserId) return;
 
     if (!this.localStream) {
       try {
@@ -542,10 +577,11 @@ export class WebRTCManager {
       if (!pc) {
         pc = this.createPeerConnection(fromUserId);
       }
+      if (!pc) return;
 
       // Handle glare (both peers sent an offer simultaneously)
       if (pc.signalingState === 'have-local-offer') {
-        const isPolite = this.currentUserId > fromUserId;
+        const isPolite = String(this.currentUserId) > String(fromUserId);
         if (!isPolite) {
           console.warn(`[WebRTC] Glare with ${fromUserId}: impolite peer ignoring incoming offer.`);
           return;
@@ -554,6 +590,11 @@ export class WebRTCManager {
         await pc.setLocalDescription({ type: 'rollback' });
       } else if (pc.signalingState === 'have-remote-offer') {
         console.warn(`[WebRTC] Duplicate remote offer from ${fromUserId} ignored.`);
+        return;
+      }
+
+      if (pc.signalingState !== 'stable') {
+        console.warn(`[WebRTC] Cannot process offer from ${fromUserId}: unexpected signalingState '${pc.signalingState}'`);
         return;
       }
 
@@ -602,10 +643,10 @@ export class WebRTCManager {
   }
 
   async handleAnswer(fromUserId, sdp) {
-    if (this.isDestroyed || !fromUserId || !sdp) return;
+    if (this.isDestroyed || !fromUserId || !sdp || fromUserId === this.currentUserId) return;
 
     const pc = this.peerConnections.get(fromUserId);
-    if (!pc) return;
+    if (!pc || !this._isConnectionActive(pc)) return;
 
     if (pc.signalingState !== 'have-local-offer') {
       console.warn(
@@ -627,13 +668,15 @@ export class WebRTCManager {
   }
 
   async handleIceCandidate(fromUserId, candidate) {
-    if (!candidate || this.isDestroyed || !fromUserId) return;
+    if (!candidate || this.isDestroyed || !fromUserId || fromUserId === this.currentUserId) return;
 
     const pc = this.peerConnections.get(fromUserId);
-    if (!this._isConnectionActive(pc)) return;
 
-    // Queue candidate safely if remote description has not been set yet
-    if (!pc.remoteDescription) {
+    // If connection exists but is dead (closed/failed), drop candidate
+    if (pc && !this._isConnectionActive(pc)) return;
+
+    // Queue candidate safely if peer connection or remote description has not been established yet
+    if (!pc || !pc.remoteDescription) {
       const queue = this.pendingIceCandidates.get(fromUserId) || [];
       const candidateStr = typeof candidate === 'string' ? candidate : candidate?.candidate || '';
       const isDuplicate = candidateStr && queue.some(
@@ -679,7 +722,11 @@ export class WebRTCManager {
     }
 
     this.pendingIceCandidates.delete(peerId);
-    spatialMixerInstance.removePeerStream(peerId);
+    try {
+      spatialMixerInstance.removePeerStream(peerId);
+    } catch (error) {
+      console.warn(`[WebRTC] Error removing peer stream for ${peerId}:`, error);
+    }
   }
 
   getPeerConnection(peerId) {
@@ -692,7 +739,9 @@ export class WebRTCManager {
   }
 
   getActivePeerIds() {
-    return Array.from(this.peerConnections.keys());
+    return Array.from(this.peerConnections.entries())
+      .filter(([_, pc]) => this._isConnectionActive(pc))
+      .map(([peerId]) => peerId);
   }
 
   destroy() {
