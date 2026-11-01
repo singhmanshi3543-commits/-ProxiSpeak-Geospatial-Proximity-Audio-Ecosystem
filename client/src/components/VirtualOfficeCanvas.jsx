@@ -42,8 +42,17 @@ function checkPositionCollides(x, y, radius = AVATAR_RADIUS, roomData) {
 
   const walls = roomData?.walls || [];
   for (const wall of walls) {
-    if (typeof wall.x1 !== 'number' || typeof wall.y1 !== 'number') continue;
-    const wallThick = (wall.thickness || 10) / 2;
+    if (
+      !Number.isFinite(wall.x1) ||
+      !Number.isFinite(wall.y1) ||
+      !Number.isFinite(wall.x2) ||
+      !Number.isFinite(wall.y2)
+    ) {
+      continue;
+    }
+
+    const thickness = Number.isFinite(wall.thickness) ? Math.max(0, wall.thickness) : 10;
+    const wallThick = thickness / 2;
     const dist = distanceToSegment(x, y, wall.x1, wall.y1, wall.x2, wall.y2);
     if (dist < radius + wallThick) {
       return true;
@@ -370,7 +379,13 @@ export function VirtualOfficeCanvas({
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      const target = e.target;
+      const isEditable =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+
+      if (isEditable) return;
 
       const key = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(key)) {
@@ -804,17 +819,32 @@ export function VirtualOfficeCanvas({
   }, [checkCurrentZone]);
 
   useEffect(() => {
-    const handleResize = () => {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-      }
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+
+    const resizeCanvas = () => {
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.round(rect.width || window.innerWidth);
+      const height = Math.round(rect.height || window.innerHeight);
+
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
     };
 
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    resizeCanvas();
+
+    let resizeObserver;
+    if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
+      resizeObserver = new ResizeObserver(resizeCanvas);
+      resizeObserver.observe(canvas.parentElement);
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      resizeObserver?.disconnect();
+    };
   }, []);
 
   return (
