@@ -214,9 +214,16 @@ export function initializeSocketHandlers(io) {
 
     socket.on('webrtc-answer', (payload) => {
       const fromUserId = signalingManager.getUserId(socket.id);
-      if (fromUserId) {
-        signalingManager.handleWebRTCAnswer(fromUserId, payload);
-      }
+      if (
+        !fromUserId || 
+        !payload ||
+        typeof payload !== 'object' ||
+        Array.isArray(payload) ||
+        typeof payload.sdp !== 'string' ||
+        !payloadload.sdp.trim()
+      ) return;
+
+      signalingManager.handleWebRTCAnswer(fromUserId , payload);
     });
 
     socket.on('webrtc-ice-candidate', (payload) => {
