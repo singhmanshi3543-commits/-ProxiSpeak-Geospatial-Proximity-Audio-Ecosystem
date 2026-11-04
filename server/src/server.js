@@ -1,79 +1,98 @@
-import express from 'express';
-import http from 'http';
-import { Server as SocketIOServer } from 'socket.io';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import connectDB from './config/db.js';
-import setupRedisAdapter from './services/redisAdapter.js';
-import initializeSocketHandlers from './socket/socketHandler.js';
-import auditRoutes from './routes/auditRoutes.js';
-import roomRoutes, { seedDefaultRoomLayout } from './routes/roomRoutes.js';
-import userRoutes from './routes/userRoutes.js';
+import http from 'node:http';
+import { Server } from 'socket.io';
 
-dotenv.config();
+import { env } from './config/env.js';
+import { connectDb, disconnectDb } from './config/db.js';
+import { createApp } from './app.js';
+import { logger } from './utils/logger.js';
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+import { registerChatSocket } from './sockets/chatSocket.js';
+import { registerCallSocket } from './sockets/callSocket.js';
+import { registerOfficeSocket } from './sockets/officeSocket.js';
 
-// Middlewares
-app.use(cors({ origin: '*', credentials: true }));
-app.use(express.json());
+import { authenticateToken } from './middleware/auth.js';
+import { COOKIE_NAME } from './utils/token.js';
 
-// API Routes
-app.use('/api/audit', auditRoutes);
-app.use('/api/rooms', roomRoutes);
-app.use('/api/users', userRoutes);
+function getCookieValue(cookieHeader, name) {
+  if (!cookieHeader) return null;
 
-// Root health & metadata
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'online',
-    system: 'ProxiSpeak - Geospatial Proximity Audio Ecosystem',
-    organization: 'Infotact Solutions',
-    timestamp: new Date().toISOString(),
-  });
-});
+  const cookies = cookieHeader.split(';');
 
-// Create HTTP and Socket.IO server
-const server = http.createServer(app);
-const io = new SocketIOServer(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-  },
-  pingTimeout: 20000,
-  pingInterval: 10000,
-});
+  for (const cookie of cookies) {
+    const separator = cookie.indexOf('=');
 
-async function startServer() {
-  try {
-    // 1. Connect MongoDB
-    await connectDB();
+    if (separator === -1) continue;
 
-    // 2. Seed Default Office Layout & Obstacles into MongoDB
-    await seedDefaultRoomLayout();
+    const key = cookie.slice(0, separator).trim();
+    const value = cookie.slice(separator + 1).trim();
 
-    // 3. Setup Redis Pub/Sub adapter (or fallback to high-perf memory adapter)
-    await setupRedisAdapter(io);
-
-    // 4. Initialize Socket.IO Proximity & WebRTC Handlers
-    const signalingManager = initializeSocketHandlers(io);
-
-    // 5. Start listening
-    server.listen(PORT, () => {
-      console.log(`=======================================================`);
-      console.log(` ProxiSpeak Geospatial Server running on port ${PORT}`);
-      console.log(` MongoDB 2D $near & $geoWithin Proximity Engine Active`);
-      console.log(`🎙️ WebRTC Mesh Signaling restricted to 100px earshot`);
-      console.log(`🏢 Infotact Digital HQ Map initialized`);
-      console.log(`=======================================================`);
-    });
-  } catch (error) {
-    console.error('Fatal server startup error:', error);
-    process.exit(1);
+    if (key === name) {
+      return decodeURIComponent(value);
+    }
   }
+
+  return null;
 }
 
-startServer();
+async function main() {
+  await connectDb();
 
-export { app, server, io };
+  const app = createApp();
+  const server = http.createServer(app);
+
+  const io = new Server(server, {
+    cors: {
+      origin: env.CLIENT_ORIGIN,
+      credentials: true,
+    },
+    transports: ['websocket', 'polling'],
+  });
+
+  // Socket authentication
+  io.use(async (socket, next) => {
+    try {
+      const token = getCookieValue(
+        socket.handshake.headers.cookie,
+        COOKIE_NAME
+      );
+
+      socket.data.user = await authenticateToken(token);
+
+      next();
+    } catch {
+      next(new Error('Authentication required'));
+    }
+  });
+
+  // Register Socket.IO features
+  registerChatSocket(io);
+  registerCallSocket(io);
+  registerOfficeSocket(io);
+
+  server.listen(env.PORT, () => {
+    logger.info(
+      `ProxiSpeak API listening on :${env.PORT} (${env.NODE_ENV})`
+    );
+  });
+
+  const shutdown = async (signal) => {
+    logger.info(`${signal} received, shutting down`);
+
+    io.close();
+
+    server.close(async () => {
+      await disconnectDb();
+      process.exit(0);
+    });
+
+    setTimeout(() => process.exit(1), 10000).unref();
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
+main().catch((err) => {
+  logger.fatal({ err }, 'Failed to start');
+  process.exit(1);
+});
