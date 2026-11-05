@@ -1,0 +1,599 @@
+.proxi-office {
+  min-height: 100vh;
+  width: 100%;
+  background: #151a2a;
+  color: white;
+  overflow: hidden;
+  font-family: Inter, Arial, sans-serif;
+}
+
+.office-header {
+  height: 65px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 0 25px;
+  background: #171b2b;
+  border-bottom: 1px solid #353d55;
+}
+
+.office-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.office-logo {
+  font-size: 30px;
+}
+
+.office-brand h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.office-brand span {
+  color: #aab2c9;
+  font-size: 10px;
+}
+
+.office-navigation {
+  display: flex;
+  gap: 7px;
+}
+
+.office-navigation button {
+  padding: 11px 17px;
+  border: 0;
+  border-radius: 25px;
+  background: transparent;
+  color: white;
+  cursor: pointer;
+}
+
+.office-navigation button.active,
+.office-navigation button:hover {
+  background: #3d65ed;
+}
+
+.office-user-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.online-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #16d982;
+}
+
+.office-workspace {
+  display: grid;
+  grid-template-columns: 165px minmax(0, 1fr) 175px;
+  gap: 12px;
+  padding: 12px;
+  min-height: calc(100vh - 145px);
+}
+
+.office-online-panel,
+.office-minimap {
+  align-self: start;
+  padding: 13px;
+  background: rgba(20, 26, 44, 0.96);
+  border: 1px solid #39435d;
+  border-radius: 14px;
+  z-index: 5;
+}
+
+.office-online-panel h3 {
+  font-size: 13px;
+  margin: 5px 0 15px;
+}
+
+.office-online-user {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 13px 0;
+}
+
+.employee-small-avatar {
+  width: 31px;
+  height: 31px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-weight: bold;
+}
+
+.office-online-user strong {
+  display: block;
+  font-size: 11px;
+}
+
+.office-online-user span {
+  display: block;
+  color: #9ca8c4;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.office-empty {
+  font-size: 12px;
+  color: #aab2c9;
+}
+
+.office-reconnect {
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: #344c9d;
+  color: white;
+  cursor: pointer;
+}
+
+.office-map {
+  position: relative;
+  min-width: 0;
+  min-height: 680px;
+  overflow: hidden;
+  border: 7px solid #3a4052;
+  border-radius: 16px;
+  background: #30384a;
+  touch-action: none;
+}
+
+.office-floor {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 50%, #e9e2d9 0%, #c7c2bc 75%, #aaa69f 100%);
+}
+
+.office-room {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px;
+  border: 5px solid #77736e;
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, #d7d0c5, #b6aea3);
+  box-shadow:
+    inset 0 0 0 2px rgba(255,255,255,.45),
+    0 5px 12px rgba(0,0,0,.22);
+  color: #272b36;
+  cursor: pointer;
+}
+
+.office-room.selected {
+  border-color: #4775ff;
+  box-shadow: 0 0 0 3px rgba(71,117,255,.3);
+}
+
+.room-title {
+  position: relative;
+  z-index: 2;
+  align-self: center;
+  padding: 5px 10px;
+  border-radius: 20px;
+  background: #292d3c;
+  color: white;
+  font-size: clamp(8px, 1vw, 13px);
+  white-space: nowrap;
+}
+
+.room-furniture {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 10px 2px;
+}
+
+.furniture-table {
+  position: relative;
+  width: 34px;
+  height: 25px;
+  border-radius: 6px;
+  background: #865b38;
+  border: 3px solid #60432e;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.furniture-table span {
+  width: 5px;
+  height: 5px;
+  background: #242d40;
+  border-radius: 50%;
+}
+
+.furniture-sofa {
+  width: 50px;
+  height: 25px;
+  border: 4px solid #243e61;
+  border-radius: 8px;
+  background: #4d78a6;
+}
+
+.furniture-plant {
+  font-size: 19px;
+}
+
+.auditorium-row {
+  display: flex;
+  gap: 3px;
+  margin: 3px;
+}
+
+.auditorium-row span {
+  width: 9px;
+  height: 7px;
+  background: #30364a;
+  border-radius: 3px;
+}
+
+.office-main-logo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 135px;
+  height: 135px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #263454;
+  border: 6px solid #e6d7bb;
+  box-shadow: 0 8px 25px rgba(0,0,0,.35);
+  z-index: 3;
+}
+
+.office-main-logo span {
+  font-size: 28px;
+}
+
+.office-main-logo strong {
+  font-size: 15px;
+}
+
+.office-main-logo small {
+  margin-top: 5px;
+  color: #c5cce0;
+  font-size: 9px;
+}
+
+.office-avatar {
+  position: absolute;
+  z-index: 10;
+  width: 35px;
+  height: 35px;
+  border: 3px solid white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  box-shadow: 0 4px 10px rgba(0,0,0,.4);
+  transition: left .15s linear, top .15s linear;
+  touch-action: none;
+}
+
+.office-avatar span {
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.office-avatar small {
+  position: absolute;
+  top: 39px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #315fda;
+  color: white;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.office-avatar.my-avatar {
+  border-color: #24c9ff;
+  box-shadow: 0 0 0 5px rgba(36,201,255,.25);
+}
+
+.office-avatar.dragging {
+  cursor: grabbing;
+  z-index: 20;
+  transition: none;
+}
+
+.office-minimap h3,
+.office-minimap h4 {
+  font-size: 12px;
+}
+
+.office-minimap p,
+.office-minimap small {
+  font-size: 11px;
+  color: #b2bdd5;
+  overflow-wrap: anywhere;
+}
+
+.mini-map-grid {
+  position: relative;
+  height: 110px;
+  border: 2px solid #68718a;
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 15px, #68718a 16px),
+    repeating-linear-gradient(90deg, transparent 0 15px, #68718a 16px),
+    #d0c9bd;
+}
+
+.mini-map-grid span {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.gps-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px;
+  border: 0;
+  border-radius: 8px;
+  background: #355bd4;
+  color: white;
+  cursor: pointer;
+}
+
+.office-footer {
+  min-height: 75px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background: #171b2b;
+  border-top: 1px solid #39435d;
+}
+
+.office-room-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.office-room-selector select {
+  padding: 8px;
+  border: 1px solid #485477;
+  border-radius: 8px;
+  background: #252c42;
+  color: white;
+}
+
+.office-call-controls {
+  display: flex;
+  gap: 15px;
+}
+
+.office-call-controls button {
+  min-width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border: 0;
+  border-radius: 12px;
+  background: #292e43;
+  color: white;
+  cursor: pointer;
+}
+
+.office-call-controls button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.office-call-controls button span {
+  font-size: 10px;
+}
+
+.office-online-count {
+  padding: 11px 16px;
+  border-radius: 25px;
+  background: #292e43;
+  font-size: 12px;
+}
+
+@media (max-width: 1000px) {
+  .office-workspace {
+    grid-template-columns: 130px minmax(0, 1fr);
+  }
+
+  .office-minimap {
+    display: none;
+  }
+
+  .office-navigation button {
+    padding: 9px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 650px) {
+  .office-header {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .office-navigation {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .office-workspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .office-online-panel {
+    width: 100%;
+  }
+
+  .office-map {
+    min-height: 520px;
+  }
+
+  .office-footer {
+    flex-wrap: wrap;
+  }
+
+  .office-call-controls {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+  }
+}
+.office-feature-panel {
+  position: absolute;
+  z-index: 20;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 350px;
+  max-height: 450px;
+  overflow-y: auto;
+  padding: 24px;
+  background: white;
+  color: #222;
+  border-radius: 14px;
+  box-shadow: 0 8px 35px rgba(0, 0, 0, 0.2);
+}
+
+.office-feature-panel h2 {
+  margin-bottom: 20px;
+}
+
+.panel-close {
+  float: right;
+  cursor: pointer;
+  border: none;
+  font-size: 18px;
+  background: transparent;
+}
+
+.office-feature-panel button {
+  cursor: pointer;
+  padding: 9px 14px;
+  margin: 5px;
+}
+
+.office-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-messages {
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.chat-message {
+  padding: 10px;
+  margin: 8px 0;
+  background: #f0f0f0;
+  border-radius: 8px;
+}
+
+.chat-input {
+  display: flex;
+  gap: 5px;
+}
+
+.chat-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px;
+}
+.people-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.people-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px;
+  background: #f5f6fa;
+  border-radius: 12px;
+}
+
+.people-avatar {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 21px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border: 3px solid white;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.15);
+}
+
+.people-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.people-details strong {
+  font-size: 14px;
+  color: #222;
+}
+
+.people-details span {
+  font-size: 12px;
+  color: #777;
+}
+
+.people-details small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #16a34a;
+}
+
+.people-status-dot {
+  width: 8px;
+  height: 8px;
+  background: #22c55e;
+  border-radius: 50%;
+}

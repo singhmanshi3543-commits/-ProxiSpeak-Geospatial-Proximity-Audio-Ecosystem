@@ -1,0 +1,129 @@
+.office-call-widget {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 340px;
+  max-height: 470px;
+  overflow-y: auto;
+  z-index: 1000;
+  padding: 18px;
+  color: #f5f6ff;
+  background: #171b2b;
+  border: 1px solid #343b55;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  font-family: inherit;
+}
+
+.office-call-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.office-call-heading h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.office-call-heading p {
+  margin: 5px 0 0;
+  color: #9ba5c2;
+  font-size: 12px;
+}
+
+.office-refresh-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #424b68;
+  border-radius: 9px;
+  background: #252c42;
+  color: white;
+  cursor: pointer;
+  font-size: 21px;
+}
+
+.office-employee-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.office-employee {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px;
+  background: #22283b;
+  border: 1px solid #343b55;
+  border-radius: 11px;
+}
+
+.office-employee-avatar {
+  width: 39px;
+  height: 39px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  font-weight: 700;
+}
+
+.office-employee-info {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.office-employee-info strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.office-employee-info span {
+  color: #9ba5c2;
+  font-size: 11px;
+}
+
+.office-employee-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.office-employee-actions button {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 9px;
+  background: #343e60;
+  color: white;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.office-employee-actions button:hover {
+  background: #5265d8;
+}
+
+.office-call-message {
+  color: #b5bdd2;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.office-call-error button {
+  display: block;
+  margin-top: 8px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 7px;
+  background: #5265d8;
+  color: white;
+  cursor: pointer;
+}
